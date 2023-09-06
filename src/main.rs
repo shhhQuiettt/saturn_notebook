@@ -4,10 +4,17 @@
 use serde::Deserialize;
 use serde_json;
 use std::fs::File;
+use uuid::Uuid;
 use zmq;
 
+mod cell;
+mod messages;
+use cell::Cell;
+use chrono::{DateTime, Utc}; // 0.4.15
+use std::time::SystemTime;
+
 //TODO: get it automatically
-const KERNEL_NO: &str = "277756";
+const KERNEL_NO: &str = "551247";
 
 #[derive(Deserialize, Debug)]
 struct KernelData {
@@ -34,6 +41,63 @@ impl KernelData {
 struct ShellSubscriber {
     // zmq_context: zmq::Context,
     zmq_socket: zmq::Socket,
+    hmac_key: String,
+}
+
+impl ShellSubscriber {
+    fn send_cell(&self, cell: &Cell) {
+        let code = cell.code.clone();
+        let now = SystemTime::now();
+        let now: DateTime<Utc> = now.into();
+        let now = now.to_rfc3339();
+
+        let zmq_identity = self
+            .zmq_socket
+            .get_identity()
+            .expect("Cannot get zmq identity");
+
+        let message = messages::Message {
+            header: messages::MessageHeader {
+                msg_id: Uuid::new_v4().to_string(),
+                session: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000")
+                    .unwrap()
+                    .to_string(),
+                username: "".to_owned(),
+                date: now,
+                msg_type: "execute_request".to_owned(),
+                version: "5.0".to_owned(),
+            },
+            parent_header: None,
+            metadata: (),
+            content: messages::ContentType::ExecuteRequest({
+                messages::ExecuteRequestContent {
+                    code: code,
+                    silent: false,
+                    store_history: true,
+                    user_expressions: (),
+                    allow_stdin: false,
+                    stop_on_error: false,
+                }
+            }),
+            buffers: vec![],
+        };
+
+        // self.zmq_socket
+        //     .send(&serde_json::to_string(&message).unwrap().as_bytes(), 0)
+        //     .expect("Cannot send message");
+        //
+        let message_bytes =
+            messages::message_to_bytes(message, &self.hmac_key.to_owned(), zmq_identity);
+        let message_str = String::from_utf8(message_bytes.to_owned()).unwrap();
+        self.zmq_socket
+            .send(&message_str, 0)
+            .expect("Cannot send message");
+        // println!("{}", String::from_utf8(messages::message_to_bytes(message, &self.hmac_key.to_owned(), zmq_identity)).unwrap());
+        println!("Sent: {}", message_str);
+        let reply = self.zmq_socket.recv_string(0).unwrap().unwrap();
+        println!("Received reply");
+        println!("{}", reply);
+    }
 }
 
 struct Client {
@@ -52,14 +116,24 @@ impl Client {
     }
 
     fn subscribe_to_shell(&self) -> ShellSubscriber {
-        let zmq_socket = self.zmq_context.socket(zmq::SUB).expect("Failed to create shell socket");
+        let zmq_socket = self
+            .zmq_context
+            .socket(zmq::REQ)
+            .expect("Failed to create shell socket");
         let shell_port = self.kernel_data.shell_port;
         let ip = &self.kernel_data.ip;
-        let address = format!("tcp://{}:{}", ip, shell_port);
-        zmq_socket.connect(&address).expect("Cannot connect to the kernel shell");
-        zmq_socket.set_subscribe(b"").expect("Cannot subscribe to the kernel shell");
+        let kernel_shell_adress = format!("tcp://{}:{}", ip, shell_port);
+
+        zmq_socket
+            .connect(&kernel_shell_adress)
+            .expect("Cannot connect to the kernel shell");
+        // zmq_socket
+        //     .set_subscribe(b"")
+        //     .expect("Cannot subscribe to the kernel shell");
+
         return ShellSubscriber {
             // zmq_context: self.zmq_context,
+            hmac_key: self.kernel_data.key.clone(),
             zmq_socket,
         };
     }
@@ -72,7 +146,10 @@ fn get_kernel_file() -> File {
 
 fn main() {
     let kernel_data = KernelData::new();
-    println!("{:#?}", kernel_data);
+    // println!("{:#?}", kernel_data);
     let client = Client::new(kernel_data);
-    let _shell_subscriber = client.subscribe_to_shell();
+    let shell_subscriber = client.subscribe_to_shell();
+
+    let cell = Cell::new("print('Hello World!')".to_owned());
+    shell_subscriber.send_cell(&cell);
 }

@@ -1,7 +1,7 @@
-
 #[derive(Default, Debug)]
+
 pub struct Cell {
-    code: String,
+    pub code: String,
 }
 
 impl Cell {
