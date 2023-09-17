@@ -24,24 +24,25 @@ pub fn message_to_bytes(message: Message, hmac_key: &str, zmq_identity: Vec<u8>)
     let hex_signature: String = mac_signature.iter().map(|b| format!("{:02x}", b)).collect();
 
     message_bytes.extend_from_slice(zmq_identity.as_slice());
-    message_bytes.push(b',');
+    // message_bytes.push(b',');
     message_bytes.extend_from_slice("<IDS|MSG>".as_bytes());
-    message_bytes.push(b',');
+    // message_bytes.push(b',');
     message_bytes.extend_from_slice(hex_signature.as_bytes());
-    message_bytes.push(b',');
+    // message_bytes.push(b',');
     message_bytes.extend_from_slice(serde_json::to_string(&message.header).unwrap().as_bytes());
-    message_bytes.push(b',');
+    // message_bytes.push(b',');
 
     if let Some(parent_header) = message.parent_header {
         message_bytes.extend_from_slice(serde_json::to_string(&parent_header).unwrap().as_bytes());
     }
-    message_bytes.push(b',');
-    message_bytes.push(b',');
+    // message_bytes.push(b',');
+    // message_bytes.push(b',');
 
-    // message_bytes.extend_from_slice(serde_json::to_string(&message.metadata).unwrap().as_bytes());
+    message_bytes.extend_from_slice(serde_json::to_string(&message.metadata).unwrap().as_bytes());
     message_bytes.extend_from_slice(serde_json::to_string(&message.content).unwrap().as_bytes());
 
-    return message_bytes;
+    // return message_bytes;
+    return "".as_bytes().to_vec();
 }
 
 #[derive(Debug, Serialize)]

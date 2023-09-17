@@ -7,14 +7,16 @@ use std::fs::File;
 use uuid::Uuid;
 use zmq;
 
+
 mod cell;
 mod messages;
+use std::thread;
 use cell::Cell;
 use chrono::{DateTime, Utc}; // 0.4.15
 use std::time::SystemTime;
 
 //TODO: get it automatically
-const KERNEL_NO: &str = "551247";
+const KERNEL_NO: &str = "78269";
 
 #[derive(Deserialize, Debug)]
 struct KernelData {
@@ -100,6 +102,11 @@ impl ShellSubscriber {
     }
 }
 
+struct IOPubSubscriber {
+    zmq_socket: zmq::Socket,
+    hmac_key: String,
+}
+
 struct Client {
     kernel_data: KernelData,
     zmq_context: zmq::Context,
@@ -137,6 +144,29 @@ impl Client {
             zmq_socket,
         };
     }
+
+    fn subscribe_to_iopub(&self) -> IOPubSubscriber {
+        let zmq_socket = self
+            .zmq_context
+            .socket(zmq::SUB)
+            .expect("Failed to create iopub socket");
+        let iopub_port = self.kernel_data.iopub_port;
+        let ip = &self.kernel_data.ip;
+        let kernel_iopub_adress = format!("tcp://{}:{}", ip, iopub_port);
+
+        zmq_socket
+            .connect(&kernel_iopub_adress)
+            .expect("Cannot connect to the kernel iopub");
+
+        zmq_socket
+            .set_subscribe(b"")
+            .expect("Cannot subscribe to the kernel iopub");
+
+        return IOPubSubscriber {
+            hmac_key: self.kernel_data.key.clone(),
+            zmq_socket,
+        };
+    }
 }
 
 fn get_kernel_file() -> File {
@@ -149,7 +179,19 @@ fn main() {
     // println!("{:#?}", kernel_data);
     let client = Client::new(kernel_data);
     let shell_subscriber = client.subscribe_to_shell();
+    let iopub_subscriber = client.subscribe_to_iopub();
+
+    thread::spawn(move || {
+        loop {
+            println!("Waiting for reply");
+            let reply = iopub_subscriber.zmq_socket.recv_string(0).unwrap().unwrap();
+            println!("Received reply");
+            println!("{}", reply);
+        }
+    });
 
     let cell = Cell::new("print('Hello World!')".to_owned());
     shell_subscriber.send_cell(&cell);
+
+    thread::sleep(std::time::Duration::from_secs(10));
 }
